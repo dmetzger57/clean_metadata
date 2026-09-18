@@ -9,8 +9,8 @@
 
 #define MAX_PATH 4096
 
-// Target patterns to identify and remove
-static const char *TARGET_PATTERNS[] = {
+// Builtin target patterns to identify and remove if config file is absent
+static const char *BUILTIN_PATTERNS[] = {
     ".DS_Store",
     ".AppleDouble",
     ".Spotlight-V100",
@@ -30,6 +30,78 @@ static const char *TARGET_PATTERNS[] = {
     "ehthumbs.db",
     NULL
 };
+
+// Global dynamic array for loaded target patterns
+static char **target_patterns = NULL;
+static size_t pattern_count = 0;
+
+// Loads patterns from ${HOME}/.clean_metadata_patterns if available, otherwise loads builtins
+static void load_patterns(void) {
+    const char *home = getenv("HOME");
+    FILE *file = NULL;
+
+    if (home != NULL) {
+        char config_path[MAX_PATH];
+        snprintf(config_path, sizeof(config_path), "%s/.clean_metadata_patterns", home);
+        file = fopen(config_path, "r");
+    }
+
+    if (file != NULL) {
+        char line[MAX_PATH];
+        size_t capacity = 10;
+        target_patterns = malloc(capacity * sizeof(char *));
+
+        while (fgets(line, sizeof(line), file) != NULL) {
+            // Trim trailing newline / carriage return
+            line[strcspn(line, "\r\n")] = '\0';
+
+            // Skip empty lines or comment lines starting with '#'
+            if (line[0] == '\0' || line[0] == '#') {
+                continue;
+            }
+
+            if (pattern_count + 1 >= capacity) {
+                capacity *= 2;
+                target_patterns = realloc(target_patterns, capacity * sizeof(char *));
+            }
+
+            target_patterns[pattern_count] = strdup(line);
+            pattern_count++;
+        }
+        fclose(file);
+
+        if (pattern_count > 0) {
+            target_patterns[pattern_count] = NULL;
+            return;
+        }
+
+        // If file had no valid entries, free memory and fall back to builtins
+        free(target_patterns);
+        target_patterns = NULL;
+    }
+
+    // Fallback: Copy BUILTIN_PATTERNS into dynamic array
+    size_t count = 0;
+    while (BUILTIN_PATTERNS[count] != NULL) {
+        count++;
+    }
+
+    target_patterns = malloc((count + 1) * sizeof(char *));
+    for (size_t i = 0; i < count; i++) {
+        target_patterns[i] = strdup(BUILTIN_PATTERNS[i]);
+    }
+    target_patterns[count] = NULL;
+    pattern_count = count;
+}
+
+// Cleanup allocated target patterns
+static void free_patterns(void) {
+    if (!target_patterns) return;
+    for (size_t i = 0; target_patterns[i] != NULL; i++) {
+        free(target_patterns[i]);
+    }
+    free(target_patterns);
+}
 
 // Node structure for collected target paths
 typedef struct Node {
@@ -65,8 +137,8 @@ static TaskQueue task_queue = { NULL, NULL, PTHREAD_MUTEX_INITIALIZER, PTHREAD_C
 
 // Helper to check if a filename matches target patterns
 static int is_target_pattern(const char *filename) {
-    for (int i = 0; TARGET_PATTERNS[i] != NULL; i++) {
-        if (strcmp(filename, TARGET_PATTERNS[i]) == 0) {
+    for (size_t i = 0; target_patterns[i] != NULL; i++) {
+        if (strcmp(filename, target_patterns[i]) == 0) {
             return 1;
         }
     }
@@ -211,6 +283,9 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    // Load dynamic/builtin patterns
+    load_patterns();
+
     printf("Scanning: %s\n\n", target_dir);
 
     // Initial root task
@@ -229,6 +304,7 @@ int main(int argc, char *argv[]) {
 
     if (matches.count == 0) {
         printf("No target housekeeping files or directories found.\n");
+        free_patterns();
         return EXIT_SUCCESS;
     }
 
@@ -253,6 +329,7 @@ int main(int argc, char *argv[]) {
             curr = curr->next;
             free(tmp);
         }
+        free_patterns();
         return EXIT_SUCCESS;
     }
 
@@ -277,6 +354,7 @@ int main(int argc, char *argv[]) {
         printf("Created index inhibition marker: %s\n", marker_path);
     }
 
+    free_patterns();
     printf("\nCleanup complete.\n");
     return EXIT_SUCCESS;
 }
