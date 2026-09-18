@@ -1,7 +1,13 @@
 #define _XOPEN_SOURCE 700
+#if defined(__APPLE__)
+// Expose BSD/Darwin extensions (e.g. _SC_NPROCESSORS_ONLN) that _XOPEN_SOURCE
+// would otherwise hide under strict POSIX conformance.
+#define _DARWIN_C_SOURCE
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -31,9 +37,40 @@ static const char *BUILTIN_PATTERNS[] = {
     NULL
 };
 
-// Global dynamic array for loaded target patterns
+// Global dynamic array for loaded target patterns (owns the strings)
 static char **target_patterns = NULL;
 static size_t pattern_count = 0;
+
+// Hash set built over target_patterns for O(1) average lookups instead of
+// a linear strcmp scan per directory entry. Entries borrow their string
+// pointers from target_patterns, which remains the owner.
+typedef struct PatternEntry {
+    const char *name;
+    struct PatternEntry *next;
+} PatternEntry;
+
+typedef struct {
+    PatternEntry **buckets;
+    size_t bucket_count;
+} PatternSet;
+
+static PatternSet pattern_set = { NULL, 0 };
+
+// FNV-1a 64-bit
+static uint64_t hash_str(const char *s) {
+    uint64_t h = 1469598103934665603ULL;
+    while (*s) {
+        h ^= (unsigned char)(*s++);
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static size_t next_pow2(size_t n) {
+    size_t p = 1;
+    while (p < n) p <<= 1;
+    return p;
+}
 
 // Loads patterns from ${HOME}/.clean_metadata_patterns if available, otherwise loads builtins
 static void load_patterns(void) {
@@ -94,6 +131,36 @@ static void load_patterns(void) {
     pattern_count = count;
 }
 
+// Build the lookup hash set over the already-loaded target_patterns.
+static void build_pattern_set(void) {
+    size_t buckets = next_pow2(pattern_count * 2 < 8 ? 8 : pattern_count * 2);
+    pattern_set.buckets = calloc(buckets, sizeof(PatternEntry *));
+    pattern_set.bucket_count = buckets;
+
+    for (size_t i = 0; i < pattern_count; i++) {
+        uint64_t h = hash_str(target_patterns[i]) & (buckets - 1);
+        PatternEntry *e = malloc(sizeof(PatternEntry));
+        e->name = target_patterns[i];
+        e->next = pattern_set.buckets[h];
+        pattern_set.buckets[h] = e;
+    }
+}
+
+static void free_pattern_set(void) {
+    if (!pattern_set.buckets) return;
+    for (size_t i = 0; i < pattern_set.bucket_count; i++) {
+        PatternEntry *e = pattern_set.buckets[i];
+        while (e) {
+            PatternEntry *tmp = e;
+            e = e->next;
+            free(tmp);
+        }
+    }
+    free(pattern_set.buckets);
+    pattern_set.buckets = NULL;
+    pattern_set.bucket_count = 0;
+}
+
 // Cleanup allocated target patterns
 static void free_patterns(void) {
     if (!target_patterns) return;
@@ -103,9 +170,10 @@ static void free_patterns(void) {
     free(target_patterns);
 }
 
-// Node structure for collected target paths
+// Node structure for collected target paths (path is heap-allocated to its
+// actual length rather than a fixed MAX_PATH buffer embedded in every node)
 typedef struct Node {
-    char path[MAX_PATH];
+    char *path;
     struct Node *next;
 } Node;
 
@@ -120,7 +188,7 @@ static MatchList matches = { NULL, PTHREAD_MUTEX_INITIALIZER, 0 };
 
 // Thread pool task queue
 typedef struct DirectoryTask {
-    char path[MAX_PATH];
+    char *path;
     struct DirectoryTask *next;
 } DirectoryTask;
 
@@ -135,10 +203,19 @@ typedef struct {
 
 static TaskQueue task_queue = { NULL, NULL, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0 };
 
-// Helper to check if a filename matches target patterns
+// Returns a thread count sized to the host, with a sane floor and cap.
+static int get_num_threads(void) {
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    if (n < 1) n = 4;
+    if (n > 32) n = 32; // I/O-bound work sees diminishing returns beyond this
+    return (int)n;
+}
+
+// Helper to check if a filename matches target patterns (O(1) average via hash set)
 static int is_target_pattern(const char *filename) {
-    for (size_t i = 0; target_patterns[i] != NULL; i++) {
-        if (strcmp(filename, target_patterns[i]) == 0) {
+    uint64_t h = hash_str(filename) & (pattern_set.bucket_count - 1);
+    for (PatternEntry *e = pattern_set.buckets[h]; e != NULL; e = e->next) {
+        if (strcmp(filename, e->name) == 0) {
             return 1;
         }
     }
@@ -149,7 +226,8 @@ static int is_target_pattern(const char *filename) {
 static void add_match(const char *path) {
     Node *node = malloc(sizeof(Node));
     if (!node) return;
-    snprintf(node->path, sizeof(node->path), "%s", path);
+    node->path = strdup(path);
+    if (!node->path) { free(node); return; }
 
     pthread_mutex_lock(&matches.lock);
     node->next = matches.head;
@@ -162,7 +240,8 @@ static void add_match(const char *path) {
 static void enqueue_task(const char *path) {
     DirectoryTask *task = malloc(sizeof(DirectoryTask));
     if (!task) return;
-    snprintf(task->path, sizeof(task->path), "%s", path);
+    task->path = strdup(path);
+    if (!task->path) { free(task); return; }
     task->next = NULL;
 
     pthread_mutex_lock(&task_queue.lock);
@@ -197,8 +276,25 @@ static void process_directory(const char *dir_path) {
             continue;
         }
 
+        // Prefer d_type from readdir() to avoid an lstat() syscall per entry.
+        // Only fall back to lstat() when the filesystem doesn't populate it
+        // (some network/FUSE mounts report DT_UNKNOWN).
+        int is_dir;
+#if defined(DT_DIR) && defined(DT_UNKNOWN)
+        if (entry->d_type == DT_DIR) {
+            is_dir = 1;
+        } else if (entry->d_type == DT_UNKNOWN) {
+            struct stat statbuf;
+            is_dir = (lstat(full_path, &statbuf) == 0 && S_ISDIR(statbuf.st_mode));
+        } else {
+            is_dir = 0;
+        }
+#else
         struct stat statbuf;
-        if (lstat(full_path, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
+        is_dir = (lstat(full_path, &statbuf) == 0 && S_ISDIR(statbuf.st_mode));
+#endif
+
+        if (is_dir) {
             enqueue_task(full_path);
         }
     }
@@ -239,7 +335,8 @@ static void *worker_thread(void *arg) {
         pthread_mutex_lock(&task_queue.lock);
         task_queue.active_workers--;
         pthread_mutex_unlock(&task_queue.lock);
-        
+
+        free(task->path);
         free(task);
     }
     return NULL;
@@ -270,6 +367,37 @@ static int remove_recursive(const char *path) {
     }
 }
 
+// Shared work list for parallel deletion: matched items are handed out to
+// worker threads via a single shared index so large matched trees (e.g. a
+// populated .Spotlight-V100 or .fseventsd) don't serialize on the main
+// thread after a parallel scan.
+typedef struct {
+    Node **items;
+    size_t count;
+    size_t next;
+    pthread_mutex_t lock;
+} DeleteJob;
+
+static DeleteJob delete_job = { NULL, 0, 0, PTHREAD_MUTEX_INITIALIZER };
+
+static void *delete_worker(void *arg) {
+    (void)arg;
+    while (1) {
+        pthread_mutex_lock(&delete_job.lock);
+        if (delete_job.next >= delete_job.count) {
+            pthread_mutex_unlock(&delete_job.lock);
+            return NULL;
+        }
+        Node *node = delete_job.items[delete_job.next++];
+        pthread_mutex_unlock(&delete_job.lock);
+
+        printf("  Removing: %s\n", node->path);
+        if (remove_recursive(node->path) != 0) {
+            perror("  Failed to remove");
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <path-to-process>\n", argv[0]);
@@ -283,16 +411,23 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Load dynamic/builtin patterns
+    // Fully buffer stdout so large match/removal listings don't trigger a
+    // write() syscall per line; flushed explicitly wherever we need output
+    // to be visible before blocking (e.g. the confirmation prompt).
+    static char stdout_buf[1 << 16];
+    setvbuf(stdout, stdout_buf, _IOFBF, sizeof(stdout_buf));
+
+    // Load dynamic/builtin patterns and index them for O(1) lookups
     load_patterns();
+    build_pattern_set();
 
     printf("Scanning: %s\n\n", target_dir);
 
     // Initial root task
     enqueue_task(target_dir);
 
-    // Spawn 8 worker threads for scanning
-    int num_threads = 8;
+    // Spawn worker threads sized to the host for scanning
+    int num_threads = get_num_threads();
     pthread_t threads[num_threads];
     for (int i = 0; i < num_threads; i++) {
         pthread_create(&threads[i], NULL, worker_thread, NULL);
@@ -304,7 +439,9 @@ int main(int argc, char *argv[]) {
 
     if (matches.count == 0) {
         printf("No target housekeeping files or directories found.\n");
+        free_pattern_set();
         free_patterns();
+        fflush(stdout);
         return EXIT_SUCCESS;
     }
 
@@ -317,33 +454,59 @@ int main(int argc, char *argv[]) {
 
     // Interactive permission request
     printf("\nDelete these items? [y/N]: ");
+    fflush(stdout); // ensure the prompt is visible before we block on input
     char response[10];
-    if (fgets(response, sizeof(response), stdin) == NULL || 
+    if (fgets(response, sizeof(response), stdin) == NULL ||
        (response[0] != 'y' && response[0] != 'Y')) {
         printf("Operation cancelled.\n");
-        
+
         // Cleanup memory
         curr = matches.head;
         while (curr) {
             Node *tmp = curr;
             curr = curr->next;
+            free(tmp->path);
             free(tmp);
         }
+        free_pattern_set();
         free_patterns();
+        fflush(stdout);
         return EXIT_SUCCESS;
     }
 
     printf("\nDeleting...\n");
+    fflush(stdout);
+
+    // Fan the deletions out across worker threads instead of walking the
+    // (potentially large) matched trees one at a time on the main thread.
+    Node **match_array = malloc(matches.count * sizeof(Node *));
+    size_t idx = 0;
     curr = matches.head;
     while (curr) {
-        printf("  Removing: %s\n", curr->path);
-        if (remove_recursive(curr->path) != 0) {
-            perror("  Failed to remove");
-        }
-        Node *tmp = curr;
+        match_array[idx++] = curr;
         curr = curr->next;
-        free(tmp);
     }
+
+    size_t total_matches = (size_t)matches.count;
+    delete_job.items = match_array;
+    delete_job.count = total_matches;
+    delete_job.next = 0;
+
+    int delete_threads = get_num_threads();
+    if ((size_t)delete_threads > total_matches) delete_threads = (int)total_matches;
+    pthread_t dthreads[delete_threads];
+    for (int i = 0; i < delete_threads; i++) {
+        pthread_create(&dthreads[i], NULL, delete_worker, NULL);
+    }
+    for (int i = 0; i < delete_threads; i++) {
+        pthread_join(dthreads[i], NULL);
+    }
+
+    for (size_t i = 0; i < total_matches; i++) {
+        free(match_array[i]->path);
+        free(match_array[i]);
+    }
+    free(match_array);
 
     // Touch index inhibition marker file (matching script logic)
     char marker_path[MAX_PATH];
@@ -354,7 +517,9 @@ int main(int argc, char *argv[]) {
         printf("Created index inhibition marker: %s\n", marker_path);
     }
 
+    free_pattern_set();
     free_patterns();
     printf("\nCleanup complete.\n");
+    fflush(stdout);
     return EXIT_SUCCESS;
 }
