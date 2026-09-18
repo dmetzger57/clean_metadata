@@ -77,26 +77,6 @@ Or compile directly without `make`:
 gcc -O2 -pthread clean_metadata.c -o clean_metadata
 ```
 
-### macOS App (`~/Applications`)
-
-For a double-clickable version, build the `.app` bundle and install it into your user `Applications` folder:
-
-```bash
-make install-app
-```
-
-This builds the CLI, wraps it in `Clean Metadata.app` (see `macos/launcher.sh` and `macos/Info.plist`), and copies it to `~/Applications/Clean Metadata.app`. `make app` builds the bundle in the repo directory without installing it, if you'd rather move it yourself.
-
-Since `clean_metadata` is interactive (it lists matches and asks for `y`/`N` confirmation), the app doesn't reimplement that as a GUI — double-clicking it opens a native folder picker, then runs the real CLI in a new Terminal window so the scan/confirm/delete flow is unchanged from the command line.
-
-The app isn't code-signed. If macOS refuses to open it ("cannot be opened because the developer cannot be verified"), right-click the app and choose **Open** once, or run:
-
-```bash
-xattr -dr com.apple.quarantine "$HOME/Applications/Clean Metadata.app"
-```
-
-The first time you scan a protected location (Desktop, Documents, Downloads, an external volume, etc.), macOS may prompt Terminal for permission under **System Settings → Privacy & Security → Files and Folders** — this is normal macOS sandboxing for Terminal, not something specific to this tool.
-
 ---
 
 ## Usage
