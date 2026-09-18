@@ -1,1 +1,4 @@
 clean_metadata
+*.app
+gui/.build/
+gui/.swiftpm/

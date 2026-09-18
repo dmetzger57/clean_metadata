@@ -399,12 +399,25 @@ static void *delete_worker(void *arg) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
+    // --scan <path>: non-interactive scan mode for driving this tool from
+    // other programs (e.g. the GUI). Prints NUL-delimited matched paths to
+    // stdout and nothing else — no banner, no prompt, no deletion — so
+    // stdout can be split on '\0' by a caller without any parsing ambiguity
+    // around paths containing spaces or newlines.
+    int scan_only = 0;
+    const char *target_dir = NULL;
+
+    if (argc == 3 && strcmp(argv[1], "--scan") == 0) {
+        scan_only = 1;
+        target_dir = argv[2];
+    } else if (argc == 2 && strcmp(argv[1], "--scan") != 0) {
+        target_dir = argv[1];
+    } else {
         fprintf(stderr, "Usage: %s <path-to-process>\n", argv[0]);
+        fprintf(stderr, "       %s --scan <path-to-process>   (non-interactive; NUL-delimited matches on stdout)\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    const char *target_dir = argv[1];
     struct stat statbuf;
     if (stat(target_dir, &statbuf) != 0 || !S_ISDIR(statbuf.st_mode)) {
         fprintf(stderr, "Error: Directory '%s' does not exist or is not a directory.\n", target_dir);
@@ -421,7 +434,9 @@ int main(int argc, char *argv[]) {
     load_patterns();
     build_pattern_set();
 
-    printf("Scanning: %s\n\n", target_dir);
+    if (!scan_only) {
+        printf("Scanning: %s\n\n", target_dir);
+    }
 
     // Initial root task
     enqueue_task(target_dir);
@@ -435,6 +450,22 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
+    }
+
+    if (scan_only) {
+        Node *curr = matches.head;
+        while (curr) {
+            fwrite(curr->path, 1, strlen(curr->path), stdout);
+            fputc('\0', stdout);
+            Node *tmp = curr;
+            curr = curr->next;
+            free(tmp->path);
+            free(tmp);
+        }
+        fflush(stdout);
+        free_pattern_set();
+        free_patterns();
+        return EXIT_SUCCESS;
     }
 
     if (matches.count == 0) {

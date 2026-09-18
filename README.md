@@ -110,6 +110,53 @@ Answering anything other than `y`/`Y` cancels the operation without deleting or 
 
 **Warning:** Deletion is permanent (no trash/recycle bin involved) and matched directories are removed recursively. Review the listed items before confirming, especially if you're using a custom pattern file.
 
+### Scripting / non-interactive use
+
+```bash
+./clean_metadata --scan <path-to-scan>
+```
+
+Performs the same scan with no banner, no prompt, and no deletion — it just prints every matched path to stdout, NUL-delimited (like `find -print0`), and exits. This is what the [GUI app](#gui-app-macos) uses under the hood; it's also handy for scripting, e.g.:
+
+```bash
+./clean_metadata --scan ~/Desktop | xargs -0 -n1 echo "would remove:"
+```
+
+---
+
+## GUI App (macOS)
+
+A native SwiftUI app wraps the CLI for a point-and-click workflow: choose a folder, scan it, review/uncheck matched items, and remove only what you approve.
+
+1. **Choose Folder…** opens a standard folder picker.
+2. **Scan** runs `clean_metadata --scan` against it and lists every match, each with a checkbox (checked by default).
+3. Uncheck anything you want to keep, or use **Select All** / **Select None**.
+4. **Remove Selected (N)** asks for confirmation, then deletes the approved items — concurrently — and shows a ✓ or ✗ next to each as it finishes. On success it also creates the `.metadata_never_index` marker at the scanned root, same as the CLI.
+
+The app doesn't reimplement scanning — it shells out to the compiled `clean_metadata` binary (bundled alongside it) so scans get the same fast, multithreaded scan engine documented below; deletion of the items you approve happens natively in the app, concurrently across the selected items.
+
+### Prerequisites
+
+* Everything under [Installation](#installation) above (to build the CLI binary the app bundles)
+* Swift toolchain (Xcode or Xcode Command Line Tools — `xcode-select --install`); this repo was built/tested against Swift 6.4
+* macOS 13 (Ventura) or later
+
+### Build & install
+
+```bash
+make install-gui-app
+```
+
+This builds the CLI, builds the SwiftUI app (`swift build -c release` in `gui/`), assembles `Clean Metadata.app` (CLI binary bundled in `Contents/Resources`), and copies it to `~/Applications/Clean Metadata.app`. `make gui-app` builds the bundle in the repo directory without installing it.
+
+The app isn't code-signed (beyond the ad-hoc signature the linker adds automatically). If macOS refuses to open it, right-click → **Open** once, or:
+
+```bash
+xattr -dr com.apple.quarantine "$HOME/Applications/Clean Metadata.app"
+```
+
+As with the CLI, scanning a protected location (Desktop, Documents, Downloads, an external volume, etc.) may prompt for permission under **System Settings → Privacy & Security → Files and Folders** the first time — this is normal macOS sandboxing, not specific to this app.
+
 ---
 
 ## Performance
