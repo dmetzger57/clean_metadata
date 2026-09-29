@@ -16,9 +16,9 @@ GUI_EXECUTABLE = CleanMetadataGUI
 APP_NAME = Clean Metadata
 APP_BUNDLE = $(APP_NAME).app
 APP_CONTENTS = $(APP_BUNDLE)/Contents
-APPLICATIONS_DIR = $(HOME)/Applications
+APPLICATIONS_DIR = /Applications
 
-.PHONY: all clean install gui gui-app install-gui-app clean-gui
+.PHONY: all clean install gui gui-app install-gui clean-gui
 
 all: $(TARGET)
 
@@ -50,8 +50,7 @@ gui-app: $(TARGET) gui
 	@cp "$(GUI_DIR)/Info.plist" "$(APP_CONTENTS)/Info.plist"
 	@echo "Built \"$(APP_BUNDLE)\""
 
-install-gui-app: gui-app
-	@mkdir -p "$(APPLICATIONS_DIR)"
+install-gui: gui-app
 	@rm -rf "$(APPLICATIONS_DIR)/$(APP_BUNDLE)"
 	@cp -R "$(APP_BUNDLE)" "$(APPLICATIONS_DIR)/"
 	@echo "Installed to $(APPLICATIONS_DIR)/$(APP_BUNDLE)"
