@@ -152,7 +152,7 @@ The app doesn't reimplement scanning — it shells out to the compiled `clean_me
 make install-gui
 ```
 
-This builds the CLI, builds the SwiftUI app (`swift build -c release` in `gui/`), assembles `Clean Metadata.app` (CLI binary bundled in `Contents/Resources`), and copies it to `/Applications/Clean Metadata.app`. `make gui-app` builds the bundle in the repo directory without installing it.
+This builds the CLI, builds the SwiftUI app (`swift build -c release` in `gui/`), assembles `Clean Metadata.app` (CLI binary and an `AppIcon.icns` generated from `gui/AppIcon.png` bundled in `Contents/Resources`), and copies it to `/Applications/Clean Metadata.app`. `make gui-app` builds the bundle in the repo directory without installing it.
 
 Writing to `/Applications` normally works for admin users; on a standard account, run `sudo make install-gui`.
 
