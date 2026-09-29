@@ -132,6 +132,13 @@ struct ContentView: View {
                 }
             }
             .disabled(state.selectedCount == 0 || state.isDeleting || state.isScanning)
+
+            // Disabled mid-removal so quitting can't abandon a half-finished
+            // batch of deletions.
+            Button("Exit") {
+                NSApp.terminate(nil)
+            }
+            .disabled(state.isDeleting)
         }
     }
 

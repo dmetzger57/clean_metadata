@@ -44,7 +44,7 @@ final class AppState: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Scan"
+        panel.prompt = "Select"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         rootURL = url
