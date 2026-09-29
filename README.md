@@ -14,7 +14,7 @@ It performs a parallel recursive scan using POSIX threads (`pthread`), presents 
 * **Targeted Cleanup:** Specifically searches for known macOS and Windows metadata files, leaving user data untouched.
 * **Interactive Confirmation:** Lists all matching paths and prompts for user permission before executing any delete operations.
 * **Parallel Recursive Deletion:** Matched files and folders (such as `.Trashes` or `.fseventsd`) are removed concurrently across worker threads via POSIX calls (`unlink`/`rmdir`), so large matched trees don't serialize deletion on a single thread.
-* **Index Inhibition:** Automatically creates a `.metadata_never_index` marker file at the root of the targeted drive to prevent macOS Spotlight from re-indexing the volume.
+* **Index Inhibition:** If the scanned root has no `.metadata_never_index` marker file, offers to create an empty one (with your permission) to prevent macOS Spotlight from re-indexing the volume.
 * **Customizable Patterns:** Optionally override the built-in target list with your own, via `~/.clean_metadata_patterns`.
 
 ---
@@ -101,12 +101,17 @@ Deleting...
   Removing: /Volumes/MyDrive/.DS_Store
   Removing: /Volumes/MyDrive/photos/.DS_Store
   Removing: /Volumes/MyDrive/.Spotlight-V100
+
+Index inhibition marker not found: /Volumes/MyDrive/.metadata_never_index
+Create it to stop Spotlight from indexing this location? [y/N]: y
 Created index inhibition marker: /Volumes/MyDrive/.metadata_never_index
 
 Cleanup complete.
 ```
 
-Answering anything other than `y`/`Y` cancels the operation without deleting or modifying anything.
+Answering anything other than `y`/`Y` to the delete prompt cancels the deletion without removing anything.
+
+If the scanned root has no `.metadata_never_index` marker, you're asked separately whether to create an empty one — whether or not anything was found or deleted. Again, only `y`/`Y` creates it; an existing marker is never modified and produces no prompt.
 
 **Warning:** Deletion is permanent (no trash/recycle bin involved) and matched directories are removed recursively. Review the listed items before confirming, especially if you're using a custom pattern file.
 
@@ -129,9 +134,9 @@ Performs the same scan with no banner, no prompt, and no deletion — it just pr
 A native SwiftUI app wraps the CLI for a point-and-click workflow: choose a folder, scan it, review/uncheck matched items, and remove only what you approve.
 
 1. **Choose Folder…** opens a standard folder picker.
-2. **Scan** runs `clean_metadata --scan` against it and lists every match, each with a checkbox (checked by default).
+2. **Scan** runs `clean_metadata --scan` against it and lists every match, each with a checkbox (checked by default). If the folder has no `.metadata_never_index` marker at its root, you're asked whether to create one (**Create** / **Not Now**).
 3. Uncheck anything you want to keep, or use **Select All** / **Select None**.
-4. **Remove Selected (N)** asks for confirmation, then deletes the approved items — concurrently — and shows a ✓ or ✗ next to each as it finishes. On success it also creates the `.metadata_never_index` marker at the scanned root, same as the CLI.
+4. **Remove Selected (N)** asks for confirmation, then deletes the approved items — concurrently — and shows a ✓ or ✗ next to each as it finishes.
 
 The app doesn't reimplement scanning — it shells out to the compiled `clean_metadata` binary (bundled alongside it) so scans get the same fast, multithreaded scan engine documented below; deletion of the items you approve happens natively in the app, concurrently across the selected items.
 

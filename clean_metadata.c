@@ -12,6 +12,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define MAX_PATH 4096
 
@@ -398,6 +400,38 @@ static void *delete_worker(void *arg) {
     }
 }
 
+// Offer to create an empty .metadata_never_index marker at the scan root
+// (which stops Spotlight from indexing the volume) if one isn't already
+// there. Only acts on an explicit 'y'/'Y'; never truncates an existing file.
+static void offer_index_marker(const char *target_dir) {
+    char marker_path[MAX_PATH];
+    snprintf(marker_path, sizeof(marker_path), "%s/.metadata_never_index", target_dir);
+
+    struct stat statbuf;
+    if (lstat(marker_path, &statbuf) == 0) {
+        return;
+    }
+
+    printf("\nIndex inhibition marker not found: %s\n", marker_path);
+    printf("Create it to stop Spotlight from indexing this location? [y/N]: ");
+    fflush(stdout);
+
+    char response[10];
+    if (fgets(response, sizeof(response), stdin) == NULL ||
+       (response[0] != 'y' && response[0] != 'Y')) {
+        printf("Marker not created.\n");
+        return;
+    }
+
+    int fd = open(marker_path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (fd >= 0) {
+        close(fd);
+        printf("Created index inhibition marker: %s\n", marker_path);
+    } else if (errno != EEXIST) {
+        perror("  Failed to create marker");
+    }
+}
+
 int main(int argc, char *argv[]) {
     // --scan <path>: non-interactive scan mode for driving this tool from
     // other programs (e.g. the GUI). Prints NUL-delimited matched paths to
@@ -470,6 +504,7 @@ int main(int argc, char *argv[]) {
 
     if (matches.count == 0) {
         printf("No target housekeeping files or directories found.\n");
+        offer_index_marker(target_dir);
         free_pattern_set();
         free_patterns();
         fflush(stdout);
@@ -499,6 +534,7 @@ int main(int argc, char *argv[]) {
             free(tmp->path);
             free(tmp);
         }
+        offer_index_marker(target_dir);
         free_pattern_set();
         free_patterns();
         fflush(stdout);
@@ -539,14 +575,8 @@ int main(int argc, char *argv[]) {
     }
     free(match_array);
 
-    // Touch index inhibition marker file (matching script logic)
-    char marker_path[MAX_PATH];
-    snprintf(marker_path, sizeof(marker_path), "%s/.metadata_never_index", target_dir);
-    FILE *f = fopen(marker_path, "a");
-    if (f) {
-        fclose(f);
-        printf("Created index inhibition marker: %s\n", marker_path);
-    }
+    fflush(stdout); // show every "Removing:" line before prompting
+    offer_index_marker(target_dir);
 
     free_pattern_set();
     free_patterns();

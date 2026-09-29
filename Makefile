@@ -31,8 +31,13 @@ install: $(TARGET)
 	@echo "Installed $(TARGET) to $(INSTALL_DIR)"
 
 # Build the SwiftUI GUI executable via Swift Package Manager.
+# With only the Command Line Tools installed (no Xcode), SwiftPM always adds
+# XCTest search paths under CommandLineTools/Developer, which doesn't exist,
+# so ld warns "search path ... not found". Those warnings are harmless;
+# filter just them out while preserving swift build's exit status.
 gui:
-	cd $(GUI_DIR) && swift build -c release
+	@set -o pipefail; cd $(GUI_DIR) && swift build -c release 2>&1 \
+		| grep -v "ld: warning: search path '.*/CommandLineTools/Developer/.*' not found"
 
 # Assemble the .app bundle: the GUI executable goes in Contents/MacOS, the
 # compiled clean_metadata CLI (which the GUI shells out to for scanning)

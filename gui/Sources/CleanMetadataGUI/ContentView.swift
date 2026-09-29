@@ -42,7 +42,10 @@ struct ContentView: View {
             Spacer()
 
             Button {
-                Task { await state.scan() }
+                Task {
+                    await state.scan()
+                    offerMarkerIfNeeded()
+                }
             } label: {
                 if state.isScanning {
                     ProgressView()
@@ -141,6 +144,18 @@ struct ContentView: View {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { await state.removeSelected() }
+    }
+
+    private func offerMarkerIfNeeded() {
+        guard state.shouldOfferMarker, let root = state.rootURL else { return }
+        let alert = NSAlert()
+        alert.messageText = "Create .metadata_never_index?"
+        alert.informativeText = "\(root.path) has no .metadata_never_index marker. Creating this empty file stops Spotlight from indexing this location."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Not Now")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        state.createMarker()
     }
 }
 

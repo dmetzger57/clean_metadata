@@ -117,13 +117,29 @@ final class AppState: ObservableObject {
             }
         }
 
-        if let root = rootURL, succeeded > 0 {
-            AppState.touchMarker(in: root)
-        }
-
         lastSummary = failed == 0
             ? "Removed \(succeeded) item(s)."
             : "Removed \(succeeded) item(s), \(failed) failed. See status icons below for details."
+    }
+
+    /// True when a folder has been scanned successfully and has no
+    /// `.metadata_never_index` marker at its root, i.e. when the user should
+    /// be offered the chance to create one.
+    var shouldOfferMarker: Bool {
+        guard let root = rootURL, errorMessage == nil else { return false }
+        return !AppState.markerExists(in: root)
+    }
+
+    func createMarker() {
+        guard let root = rootURL else { return }
+        do {
+            try AppState.createMarker(in: root)
+            lastSummary = [lastSummary, "Created .metadata_never_index marker."]
+                .compactMap { $0 }
+                .joined(separator: " ")
+        } catch {
+            errorMessage = "Could not create .metadata_never_index: \(error.localizedDescription)"
+        }
     }
 
     private func setStatus(_ status: ItemStatus, for id: String) {
@@ -241,13 +257,22 @@ extension AppState {
         }
     }
 
-    /// Mirrors the CLI's index-inhibition marker: create (don't truncate)
-    /// `.metadata_never_index` at the scanned root after a successful
-    /// cleanup.
-    nonisolated static func touchMarker(in root: URL) {
-        let markerPath = root.appendingPathComponent(".metadata_never_index").path
-        if !FileManager.default.fileExists(atPath: markerPath) {
-            FileManager.default.createFile(atPath: markerPath, contents: nil)
+    nonisolated static func markerURL(in root: URL) -> URL {
+        root.appendingPathComponent(".metadata_never_index")
+    }
+
+    nonisolated static func markerExists(in root: URL) -> Bool {
+        FileManager.default.fileExists(atPath: markerURL(in: root).path)
+    }
+
+    /// Mirrors the CLI's index-inhibition marker: create an empty
+    /// `.metadata_never_index` at the scanned root, never overwriting an
+    /// existing one (`.withoutOverwriting` fails with a file-exists error).
+    nonisolated static func createMarker(in root: URL) throws {
+        do {
+            try Data().write(to: markerURL(in: root), options: .withoutOverwriting)
+        } catch CocoaError.fileWriteFileExists {
+            // Already present — nothing to do.
         }
     }
 }
