@@ -149,15 +149,17 @@ The app doesn't reimplement scanning — it shells out to the compiled `clean_me
 ### Build & install
 
 ```bash
-make install-gui-app
+make install-gui
 ```
 
-This builds the CLI, builds the SwiftUI app (`swift build -c release` in `gui/`), assembles `Clean Metadata.app` (CLI binary bundled in `Contents/Resources`), and copies it to `~/Applications/Clean Metadata.app`. `make gui-app` builds the bundle in the repo directory without installing it.
+This builds the CLI, builds the SwiftUI app (`swift build -c release` in `gui/`), assembles `Clean Metadata.app` (CLI binary bundled in `Contents/Resources`), and copies it to `/Applications/Clean Metadata.app`. `make gui-app` builds the bundle in the repo directory without installing it.
+
+Writing to `/Applications` normally works for admin users; on a standard account, run `sudo make install-gui`.
 
 The app isn't code-signed (beyond the ad-hoc signature the linker adds automatically). If macOS refuses to open it, right-click → **Open** once, or:
 
 ```bash
-xattr -dr com.apple.quarantine "$HOME/Applications/Clean Metadata.app"
+xattr -dr com.apple.quarantine "/Applications/Clean Metadata.app"
 ```
 
 As with the CLI, scanning a protected location (Desktop, Documents, Downloads, an external volume, etc.) may prompt for permission under **System Settings → Privacy & Security → Files and Folders** the first time — this is normal macOS sandboxing, not specific to this app.
