@@ -158,8 +158,8 @@ static void normalise_path(const char *input, char *out, size_t out_size) {
 
 // MARK: - Locating and running the scanner
 
-// Directory containing this executable, or "" if it can't be determined.
-static void executable_dir(const char *argv0, char *out, size_t out_size) {
+// Resolved path of this executable, or "" if it can't be determined.
+static void executable_path(const char *argv0, char *out, size_t out_size) {
     char raw[MAX_PATH] = "";
 #if defined(__APPLE__)
     uint32_t size = sizeof(raw);
@@ -177,27 +177,37 @@ static void executable_dir(const char *argv0, char *out, size_t out_size) {
         out[0] = '\0';
         return;
     }
-    char *slash = strrchr(resolved, '/');
-    if (slash) *slash = '\0';
     snprintf(out, out_size, "%s", resolved);
 }
+
+// This program is itself installed as `clean_metadata` (in ~/bin), so a
+// candidate that is this very executable must be skipped rather than run
+// as the scanner.
+static struct stat self_stat;
+static int have_self_stat = 0;
 
 static int try_candidate(const char *dir, const char *suffix, char *out, size_t out_size) {
     if (!dir || dir[0] == '\0') return 0;
     snprintf(out, out_size, "%s%s/%s", dir, suffix, CLI_NAME);
     struct stat st;
-    return stat(out, &st) == 0 && S_ISREG(st.st_mode) && access(out, X_OK) == 0;
+    if (stat(out, &st) != 0 || !S_ISREG(st.st_mode) || access(out, X_OK) != 0) return 0;
+    return !(have_self_stat && st.st_dev == self_stat.st_dev && st.st_ino == self_stat.st_ino);
 }
 
 // Looks for the `clean_metadata` scanner: next to this executable first,
-// then the current directory and its parent (useful when run from the repo),
-// ~/bin, /usr/local/bin, the copy bundled in /Applications/Clean Metadata.app,
-// and finally $PATH.
+// then ../libexec/clean_metadata relative to it (where `make install` puts
+// the scanner), the current directory and its parent (useful when run from
+// the repo), ~/libexec/clean_metadata, /usr/local/bin, the copy bundled in
+// /Applications/Clean Metadata.app, and finally $PATH.
 static int locate_cli_binary(const char *argv0, char *out, size_t out_size) {
     char self_dir[MAX_PATH];
-    executable_dir(argv0, self_dir, sizeof(self_dir));
+    executable_path(argv0, self_dir, sizeof(self_dir));
+    have_self_stat = self_dir[0] != '\0' && stat(self_dir, &self_stat) == 0;
+    char *slash = strrchr(self_dir, '/');
+    if (slash) *slash = '\0';
+
     if (try_candidate(self_dir, "", out, out_size)) return 1;
-    if (try_candidate(self_dir, "/..", out, out_size)) return 1;
+    if (try_candidate(self_dir, "/../libexec/clean_metadata", out, out_size)) return 1;
 
     char cwd[MAX_PATH];
     if (getcwd(cwd, sizeof(cwd))) {
@@ -205,7 +215,7 @@ static int locate_cli_binary(const char *argv0, char *out, size_t out_size) {
         if (try_candidate(cwd, "/..", out, out_size)) return 1;
     }
 
-    if (try_candidate(getenv("HOME"), "/bin", out, out_size)) return 1;
+    if (try_candidate(getenv("HOME"), "/libexec/clean_metadata", out, out_size)) return 1;
     if (try_candidate("/usr/local/bin", "", out, out_size)) return 1;
 #if defined(__APPLE__)
     // The copy bundled inside the GUI app (see `make install-gui`).

@@ -64,10 +64,11 @@ cd clean_metadata
 # Build (uses -O2 -pthread, see Makefile)
 make
 
-# Optional: install to ~/bin
+# Optional: install the interactive tool to ~/bin/clean_metadata
+# (the scanner goes to ~/libexec/clean_metadata/; see "Interactive CLI" below)
 make install
 
-# Remove the built binary
+# Remove the built binaries
 make clean
 ```
 
@@ -135,11 +136,13 @@ A terminal equivalent of the [GUI app](#gui-app-macos), written in C: choose a f
 
 ```bash
 make cli                          # builds ./clean_metadata_cli
-make install-cli                  # installs clean_metadata and clean_metadata_cli to ~/bin
+make install                      # installs it as ~/bin/clean_metadata (install-cli is an alias)
 
-./clean_metadata_cli              # start with no folder chosen
-./clean_metadata_cli /Volumes/X   # choose /Volumes/X and scan it immediately
+clean_metadata                    # start with no folder chosen
+clean_metadata /Volumes/X         # choose /Volumes/X and scan it immediately
 ```
+
+Once installed, `clean_metadata` on your `PATH` is this interactive tool. The scanner it drives (the `clean_metadata` binary built in the repo root, documented under [Usage](#usage)) is installed alongside it as `~/libexec/clean_metadata/clean_metadata`, so the two don't collide.
 
 At the `>` prompt:
 
@@ -153,7 +156,7 @@ At the `>` prompt:
 | `r` | Remove the selected items after a `[y/N]` confirmation. Removal runs concurrently, then each item shows `✓ removed` or `✗ <error>`. Ctrl-C is ignored while removal is in progress. |
 | `h` / `q` | Help / exit |
 
-Like the GUI, it doesn't reimplement scanning: it runs `clean_metadata --scan`, looking for that binary next to itself first, then in the current directory, `~/bin`, `/usr/local/bin`, inside `/Applications/Clean Metadata.app/Contents/Resources` (macOS), and finally `$PATH`. Set `NO_COLOR` to turn off colored output.
+Like the GUI, it doesn't reimplement scanning: it runs `clean_metadata --scan`, looking for that binary (skipping itself) next to itself first, then in `../libexec/clean_metadata/` relative to itself, the current directory, `~/libexec/clean_metadata/`, `/usr/local/bin`, inside `/Applications/Clean Metadata.app/Contents/Resources` (macOS), and finally `$PATH`. Set `NO_COLOR` to turn off colored output.
 
 ---
 
