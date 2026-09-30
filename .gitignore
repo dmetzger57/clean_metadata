@@ -3,3 +3,4 @@ clean_metadata
 gui/.build/
 gui/.swiftpm/
 .DS_Store
+clean_metadata_cli

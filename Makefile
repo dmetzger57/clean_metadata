@@ -6,6 +6,12 @@ LDFLAGS = -pthread
 TARGET = clean_metadata
 INSTALL_DIR = $(HOME)/bin
 
+# Interactive terminal front-end (the CLI equivalent of the GUI). Like the
+# GUI, it runs the clean_metadata scanner via `--scan`, so install-cli
+# installs both binaries side by side.
+CLI_TARGET = clean_metadata_cli
+CLI_SRC = cli/clean_metadata_cli.c
+
 # macOS GUI app bundle (double-clickable, installs into ~/Applications).
 # The bundle carries its own copy of the CLI binary in Contents/Resources
 # and runs it via `--scan` to drive the approval list; see gui/README or
@@ -21,7 +27,7 @@ ICON_SRC = $(GUI_DIR)/AppIcon.png
 ICONSET = $(GUI_DIR)/.build/AppIcon.iconset
 ICNS = $(GUI_DIR)/.build/AppIcon.icns
 
-.PHONY: all clean install gui gui-app install-gui clean-gui
+.PHONY: all clean install cli install-cli gui gui-app install-gui clean-gui
 
 all: $(TARGET)
 
@@ -32,6 +38,17 @@ install: $(TARGET)
 	@mkdir -p $(INSTALL_DIR)
 	install -m 755 $(TARGET) $(INSTALL_DIR)/$(TARGET)
 	@echo "Installed $(TARGET) to $(INSTALL_DIR)"
+
+cli: $(CLI_TARGET)
+
+$(CLI_TARGET): $(CLI_SRC)
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@
+
+install-cli: $(TARGET) $(CLI_TARGET)
+	@mkdir -p $(INSTALL_DIR)
+	install -m 755 $(TARGET) $(INSTALL_DIR)/$(TARGET)
+	install -m 755 $(CLI_TARGET) $(INSTALL_DIR)/$(CLI_TARGET)
+	@echo "Installed $(TARGET) and $(CLI_TARGET) to $(INSTALL_DIR)"
 
 # Build the SwiftUI GUI executable via Swift Package Manager.
 # With only the Command Line Tools installed (no Xcode), SwiftPM always adds
@@ -75,4 +92,4 @@ clean-gui:
 	rm -rf "$(APP_BUNDLE)"
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(CLI_TARGET)

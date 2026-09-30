@@ -129,6 +129,34 @@ Performs the same scan with no banner, no prompt, and no deletion — it just pr
 
 ---
 
+## Interactive CLI (`clean_metadata_cli`)
+
+A terminal equivalent of the [GUI app](#gui-app-macos), written in C: choose a folder, scan it, review and deselect items, and remove only what you approve. It works on macOS and Linux.
+
+```bash
+make cli                          # builds ./clean_metadata_cli
+make install-cli                  # installs clean_metadata and clean_metadata_cli to ~/bin
+
+./clean_metadata_cli              # start with no folder chosen
+./clean_metadata_cli /Volumes/X   # choose /Volumes/X and scan it immediately
+```
+
+At the `>` prompt:
+
+| Command | Action |
+| :--- | :--- |
+| `f [path]` | Choose a folder (prompts if no path is given; quoted or backslash-escaped paths such as a Finder drag-and-drop work, as does `~`) |
+| `s` | Scan the chosen folder, then list each match with a checkbox (all selected by default). If the folder has no `.metadata_never_index` at its root, you're asked whether to create one. |
+| `l` | Show the list again |
+| `t 2 5-8` | Toggle the selection of items by number or range |
+| `a` / `n` | Select all / select none |
+| `r` | Remove the selected items after a `[y/N]` confirmation. Removal runs concurrently, then each item shows `✓ removed` or `✗ <error>`. Ctrl-C is ignored while removal is in progress. |
+| `h` / `q` | Help / exit |
+
+Like the GUI, it doesn't reimplement scanning: it runs `clean_metadata --scan`, looking for that binary next to itself first, then in the current directory, `~/bin`, `/usr/local/bin`, inside `/Applications/Clean Metadata.app/Contents/Resources` (macOS), and finally `$PATH`. Set `NO_COLOR` to turn off colored output.
+
+---
+
 ## GUI App (macOS)
 
 A native SwiftUI app wraps the CLI for a point-and-click workflow: choose a folder, scan it, review/uncheck matched items, and remove only what you approve.
